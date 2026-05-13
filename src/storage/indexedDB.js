@@ -121,6 +121,95 @@ export function hasOp(db, id) {
     });
 }
 
+/**
+ * Get a single operation by its UUID.
+ * @param {IDBDatabase} db
+ * @param {string} id
+ * @returns {Promise<object|null>}
+ */
+export function getOpById(db, id) {
+    return new Promise((resolve, reject) => {
+        const req = db
+            .transaction(STORE_OPS, "readonly")
+            .objectStore(STORE_OPS)
+            .get(id);
+        req.onsuccess = (e) => resolve(e.target.result ?? null);
+        req.onerror   = (e) => reject(e.target.error);
+    });
+}
+
+/**
+ * Count all operations in the store.
+ * @param {IDBDatabase} db
+ * @returns {Promise<number>}
+ */
+export function countOps(db) {
+    return new Promise((resolve, reject) => {
+        const req = db
+            .transaction(STORE_OPS, "readonly")
+            .objectStore(STORE_OPS)
+            .count();
+        req.onsuccess = (e) => resolve(e.target.result);
+        req.onerror   = (e) => reject(e.target.error);
+    });
+}
+
+/**
+ * Filter operations by matching nested field values.
+ *
+ * @param {IDBDatabase} db
+ * @param {Record<string, unknown>} filter   dot-notation keys, e.g. { "data.source": "node-a" }
+ * @param {{ since?: number, limit?: number }} [options]
+ * @returns {Promise<object[]>}
+ *
+ * @example
+ * queryOps(db, { "data.source": "browser-test" })
+ * queryOps(db, { "publicKey": "917e3d..." })
+ * queryOps(db, { "data.source": "node-a" }, { since: Date.now() - 60000, limit: 10 })
+ */
+export function queryOps(db, filter, { since = 0, limit = Infinity } = {}) {
+    return new Promise((resolve, reject) => {
+        const range = IDBKeyRange.lowerBound(since, true);
+        const req   = db
+            .transaction(STORE_OPS, "readonly")
+            .objectStore(STORE_OPS)
+            .index(INDEX_TS)
+            .openCursor(range);
+
+        const results = [];
+
+        req.onsuccess = (e) => {
+            const cursor = e.target.result;
+            if (!cursor || results.length >= limit) {
+                resolve(results);
+                return;
+            }
+            if (_matchesFilter(cursor.value, filter)) {
+                results.push(cursor.value);
+            }
+            cursor.continue();
+        };
+
+        req.onerror = (e) => reject(e.target.error);
+    });
+}
+
+/**
+ * Resolve a dot-notation path on an object.
+ * e.g. _get({ data: { source: "x" } }, "data.source") → "x"
+ */
+function _get(obj, path) {
+    return path.split(".").reduce((cur, key) => cur?.[key], obj);
+}
+
+function _matchesFilter(op, filter) {
+    return Object.entries(filter).every(([path, expected]) => {
+        const actual = _get(op, path);
+        if (Array.isArray(actual)) return actual.includes(expected);
+        return actual === expected;
+    });
+}
+
 // ------------------------------------------------------------------ //
 // Write
 // ------------------------------------------------------------------ //

@@ -22,13 +22,15 @@
     <button onclick="init()">1. Connect &amp; Sync</button>
     <button onclick="writeOp()">2. Write Operation</button>
     <button onclick="readAll()">3. Read All Local Ops</button>
+    <button onclick="queryBySource()">Query by Source</button>
+    <button onclick="countAll()">Count Ops</button>
     <button onclick="resetIdentity()">Reset Identity</button>
     <button onclick="clearLog()">Clear Log</button>
 
     <pre id="log"></pre>
 
     <script type="module">
-        import { openDB, getAllOps, mergeOps }  from "../src/storage/indexedDB.js";
+        import { openDB, getAllOps, mergeOps, queryOps, countOps, getOpById } from "../src/storage/indexedDB.js";
         import { sync, shareOperation }         from "../src/sync/sync.js";
         import { createIdentity, clearIdentity } from "../src/identity/identity.js";
 
@@ -83,6 +85,21 @@
             }
         };
 
+        async function queryBySource() {
+            if (!db) { log("ERROR: call Connect first"); return; }
+            const results = await queryOps(db, { "data.source": "browser-test" });
+            log(`queryOps({ "data.source": "browser-test" }) → ${results.length} op(s):`);
+            for (const op of results) {
+                log("  " + op.id.slice(0, 8) + "... val=" + op.data?.value + " ts=" + op.ts);
+            }
+        }
+
+        async function countAll() {
+            if (!db) { log("ERROR: call Connect first"); return; }
+            const n = await countOps(db);
+            log(`countOps() → ${n} op(s) in local DB`);
+        }
+
         function resetIdentity() {
             clearIdentity();
             db = ws = identity = null;
@@ -92,11 +109,13 @@
         function clearLog() { document.getElementById("log").textContent = ""; }
 
         // expose to onclick handlers
-        window.init          = init;
-        window.writeOp       = writeOp;
-        window.readAll       = readAll;
-        window.resetIdentity = resetIdentity;
-        window.clearLog      = clearLog;
+        window.init           = init;
+        window.writeOp        = writeOp;
+        window.readAll        = readAll;
+        window.queryBySource  = queryBySource;
+        window.countAll       = countAll;
+        window.resetIdentity  = resetIdentity;
+        window.clearLog       = clearLog;
     </script>
 </body>
 </html>

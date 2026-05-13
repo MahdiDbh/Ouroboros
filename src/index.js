@@ -19,3 +19,5 @@ export { openDB, setData, getData, getLatestOp, getAllOps, mergeOps, hasOp, getO
 export { makeMessage, MessageType }                         from "./messages/messages.js";
 export { createEncryptionIdentity, deriveSharedKey,
          encryptData, decryptData }                         from "./crypto/encryption.js";
+export { buildState, applyOp, resolveConflict,
+         stateToObject }                                    from "./crdt/lww.js";

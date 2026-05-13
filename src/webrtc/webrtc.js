@@ -12,7 +12,10 @@
  *   });
  */
 
-const ICE_SERVERS = [{ urls: "stun:stun.l.google.com:19302" }];
+const ICE_SERVERS = [
+    { urls: "stun:stun.l.google.com:19302" },
+    { urls: "stun:stun1.l.google.com:19302" },
+];
 
 /**
  * @typedef {Object} WebRTCOptions
@@ -158,6 +161,10 @@ export class WebRTCPeer {
             if (event.candidate) {
                 this._send({ type: "signal", payload: { to: peerId, data: { candidate: event.candidate } } });
             }
+        };
+
+        pc.oniceconnectionstatechange = () => {
+            console.log(`[webrtc] ICE state ↔ ${peerId.slice(0, 8)}: ${pc.iceConnectionState}`);
         };
 
         pc.ondatachannel = (event) => {

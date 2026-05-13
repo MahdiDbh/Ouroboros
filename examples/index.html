@@ -36,7 +36,7 @@
         import { sync, shareOperation }         from "../src/sync/sync.js";
         import { createIdentity, clearIdentity } from "../src/identity/identity.js";
 
-        let db, ws, identity;
+        let db, ws, rtcPeer, identity;
 
         function log(msg) {
             const el = document.getElementById("log");
@@ -58,13 +58,18 @@
             db = await openDB();
             log("indexedDB opened");
 
-            ws = sync(db, identity, "ws://localhost:9090", {
-                onConnect:    ()    => log("connected to relay"),
-                onSynced:     ()    => log("initial sync complete"),
-                onOperation:  (op)  => log("live op received: " + op.id),
-                onDisconnect: ()    => log("disconnected from relay"),
-                verify: true,
+            const result = sync(db, identity, "ws://localhost:9090", {
+                onConnect:    ()       => log("connected to relay"),
+                onSynced:     ()       => { log("initial sync complete"); rtcPeer = result.getRTC(); },
+                onOperation:  (op)     => log("live op received (relay): " + op.id.slice(0, 8)),
+                onDisconnect: ()       => log("disconnected from relay"),
+                onPeerJoined: (peerId) => log("WebRTC peer joined: " + peerId.slice(0, 8)),
+                onPeerLeft:   (peerId) => log("WebRTC peer left: " + peerId.slice(0, 8)),
+                verify:       true,
+                signalingUrl: "ws://localhost:8081",
+                roomId:       "ouroboros-room",
             });
+            ws = result.ws;
         };
 
         async function writeOp() {
@@ -74,7 +79,7 @@
             const op = await shareOperation(ws, db, identity, {
                 data:    { source: "browser-test", value: Math.random().toFixed(4) },
                 signals: { entry: "test-entry", exit: "test-exit" },
-            });
+            }, rtcPeer);
             log("op written: " + op.id + " | value=" + op.data.value);
         };
 
@@ -131,7 +136,8 @@
 
         function resetIdentity() {
             clearIdentity();
-            db = ws = identity = null;
+            rtcPeer?.close();
+            db = ws = rtcPeer = identity = null;
             log("identity erased — next Connect will generate a fresh keypair");
         };
 

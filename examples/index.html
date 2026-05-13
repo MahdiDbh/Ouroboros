@@ -22,6 +22,7 @@
     <button onclick="init()">1. Connect &amp; Sync</button>
     <button onclick="writeOp()">2. Write Operation</button>
     <button onclick="readAll()">3. Read All Local Ops</button>
+    <button onclick="testEncryption()">Test Encryption</button>
     <button onclick="queryBySource()">Query by Source</button>
     <button onclick="countAll()">Count Ops</button>
     <button onclick="resetIdentity()">Reset Identity</button>
@@ -31,6 +32,7 @@
 
     <script type="module">
         import { openDB, getAllOps, mergeOps, queryOps, countOps, getOpById } from "../src/storage/indexedDB.js";
+        import { createEncryptionIdentity, deriveSharedKey, encryptData, decryptData } from "../src/crypto/encryption.js";
         import { sync, shareOperation }         from "../src/sync/sync.js";
         import { createIdentity, clearIdentity } from "../src/identity/identity.js";
 
@@ -85,6 +87,33 @@
             }
         };
 
+        async function testEncryption() {
+            log("── Encryption Test ──");
+
+            // 1. Simulate two peers — each has an ECDH keypair
+            const peerA = await createEncryptionIdentity();
+            const peerB = await createEncryptionIdentity();
+            log("peerA pubkey: " + peerA.publicKey.slice(0, 16) + "...");
+            log("peerB pubkey: " + peerB.publicKey.slice(0, 16) + "...");
+
+            // 2. Each derives the shared key independently (no exchange needed)
+            const keyA = await deriveSharedKey(peerA.keyPair.privateKey, peerB.publicKey);
+            const keyB = await deriveSharedKey(peerB.keyPair.privateKey, peerA.publicKey);
+            log("shared keys derived ✓");
+
+            // 3. PeerA encrypts
+            const original  = { source: "peerA", value: "secret-0.9999", msg: "private data" };
+            const ciphertext = await encryptData(keyA, original);
+            log("encrypted: " + ciphertext.slice(0, 32) + "...");
+
+            // 4. PeerB decrypts
+            const decrypted = await decryptData(keyB, ciphertext);
+            log("decrypted: " + JSON.stringify(decrypted));
+
+            const ok = JSON.stringify(original) === JSON.stringify(decrypted);
+            log(ok ? " Encryption works — relay saw only ciphertext" : "❌ Mismatch!");
+        }
+
         async function queryBySource() {
             if (!db) { log("ERROR: call Connect first"); return; }
             const results = await queryOps(db, { "data.source": "browser-test" });
@@ -109,13 +138,14 @@
         function clearLog() { document.getElementById("log").textContent = ""; }
 
         // expose to onclick handlers
-        window.init           = init;
-        window.writeOp        = writeOp;
-        window.readAll        = readAll;
-        window.queryBySource  = queryBySource;
-        window.countAll       = countAll;
-        window.resetIdentity  = resetIdentity;
-        window.clearLog       = clearLog;
+        window.init            = init;
+        window.writeOp         = writeOp;
+        window.readAll         = readAll;
+        window.testEncryption  = testEncryption;
+        window.queryBySource   = queryBySource;
+        window.countAll        = countAll;
+        window.resetIdentity   = resetIdentity;
+        window.clearLog        = clearLog;
     </script>
 </body>
 </html>

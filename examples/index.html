@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Ouroboros — Dev Test</title>
+    <style>
+        body { font-family: monospace; background: #0d0d0d; color: #00ff88; padding: 20px; }
+        h2   { color: #fff; }
+        pre  { background: #111; padding: 12px; border-radius: 6px; overflow-x: auto; }
+        button {
+            background: #00ff88; color: #000; border: none;
+            padding: 8px 16px; margin: 6px 4px; cursor: pointer;
+            font-family: monospace; font-size: 14px; border-radius: 4px;
+        }
+        button:hover { background: #00cc66; }
+        #log { height: 400px; overflow-y: auto; }
+    </style>
+</head>
+<body>
+    <h2>Ouroboros — Local Test</h2>
+
+    <button onclick="init()">1. Connect &amp; Sync</button>
+    <button onclick="writeOp()">2. Write Operation</button>
+    <button onclick="readAll()">3. Read All Local Ops</button>
+    <button onclick="resetIdentity()">Reset Identity</button>
+    <button onclick="clearLog()">Clear Log</button>
+
+    <pre id="log"></pre>
+
+    <script type="module">
+        import { openDB, getAllOps, mergeOps }  from "../src/storage/indexedDB.js";
+        import { sync, shareOperation }         from "../src/sync/sync.js";
+        import { createIdentity, clearIdentity } from "../src/identity/identity.js";
+
+        let db, ws, identity;
+
+        function log(msg) {
+            const el = document.getElementById("log");
+            el.textContent += `[${new Date().toISOString().slice(11,19)}] ${msg}\n`;
+            el.scrollTop = el.scrollHeight;
+        }
+
+        async function init() {
+            const hadSaved = !!localStorage.getItem("ouroboros:identity");
+            try {
+                identity = await createIdentity();
+            } catch (err) {
+                log("ERROR: " + err.message);
+                return;
+            }
+            log((hadSaved ? "identity loaded from localStorage" : "new identity generated")
+                + " — pubkey: " + identity.publicKey.slice(0, 16) + "...");
+
+            db = await openDB();
+            log("indexedDB opened");
+
+            ws = sync(db, identity, "ws://localhost:9090", {
+                onConnect:    ()    => log("connected to relay"),
+                onSynced:     ()    => log("initial sync complete"),
+                onOperation:  (op)  => log("live op received: " + op.id),
+                onDisconnect: ()    => log("disconnected from relay"),
+                verify: true,
+            });
+        };
+
+        async function writeOp() {
+            if (!ws || !db || !identity) { log("ERROR: call Connect first"); return; }
+            if (ws.readyState !== WebSocket.OPEN) { log("ERROR: WebSocket not open yet"); return; }
+
+            const op = await shareOperation(ws, db, identity, {
+                data:    { source: "browser-test", value: Math.random().toFixed(4) },
+                signals: { entry: "test-entry", exit: "test-exit" },
+            });
+            log("op written: " + op.id + " | value=" + op.data.value);
+        };
+
+        async function readAll() {
+            if (!db) { log("ERROR: call Connect first"); return; }
+            const ops = await getAllOps(db, 0);
+            log(`local ops (${ops.length} total):`);
+            for (const op of ops) {
+                log("  " + op.id.slice(0, 8) + "... ts=" + op.ts + " val=" + (op.data?.value ?? "—"));
+            }
+        };
+
+        function resetIdentity() {
+            clearIdentity();
+            db = ws = identity = null;
+            log("identity erased — next Connect will generate a fresh keypair");
+        };
+
+        function clearLog() { document.getElementById("log").textContent = ""; }
+
+        // expose to onclick handlers
+        window.init          = init;
+        window.writeOp       = writeOp;
+        window.readAll       = readAll;
+        window.resetIdentity = resetIdentity;
+        window.clearLog      = clearLog;
+    </script>
+</body>
+</html>

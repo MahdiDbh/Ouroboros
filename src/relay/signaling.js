@@ -117,10 +117,10 @@ export function createSignalingServer(port = DEFAULT_PORT) {
 
             switch (msg.type) {
                 case "join": {
-                    const peers = roomManager.getPeers(msg.payload.roomId);
-                    send(socket, { type: "peers", payload: { peers: [...peers] } });
-                    notifyPeers(peerId, msg.payload.roomId, "peerJoined");
+                    const existingPeers = [...roomManager.getPeers(msg.payload.roomId)];
                     roomManager.join(msg.payload.roomId, peerId);
+                    send(socket, { type: "peers", payload: { peers: existingPeers } });
+                    notifyPeers(peerId, msg.payload.roomId, "peerJoined");
                     break;
                 }
                 case "offer":

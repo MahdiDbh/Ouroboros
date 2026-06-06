@@ -15,5 +15,9 @@
 export { createRelayServer }                                from "./relay/server.js";
 export { sync, shareOperation }                             from "./sync/sync.js";
 export { createIdentity, signMessage, verifyMessage }       from "./identity/identity.js";
-export { openDB, setData, getData, getLatestOp, getAllOps, mergeOps, hasOp } from "./storage/indexedDB.js";
+export { openDB, setData, getData, getLatestOp, getAllOps, mergeOps, hasOp, getOpById, countOps, queryOps } from "./storage/indexedDB.js";
 export { makeMessage, MessageType }                         from "./messages/messages.js";
+export { createEncryptionIdentity, deriveSharedKey,
+         encryptData, decryptData }                         from "./crypto/encryption.js";
+export { buildState, applyOp, resolveConflict,
+         stateToObject }                                    from "./crdt/lww.js";

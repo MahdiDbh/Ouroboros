@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Ouroboros — Dev Test</title>
+    <style>
+        body { font-family: monospace; background: #0d0d0d; color: #00ff88; padding: 20px; }
+        h2   { color: #fff; }
+        pre  { background: #111; padding: 12px; border-radius: 6px; overflow-x: auto; }
+        button {
+            background: #00ff88; color: #000; border: none;
+            padding: 8px 16px; margin: 6px 4px; cursor: pointer;
+            font-family: monospace; font-size: 14px; border-radius: 4px;
+        }
+        button:hover { background: #00cc66; }
+        #log { height: 400px; overflow-y: auto; }
+    </style>
+</head>
+<body>
+    <h2>Ouroboros — Local Test</h2>
+
+    <button onclick="init()">1. Connect &amp; Sync</button>
+    <button onclick="writeOp()">2. Write Operation</button>
+    <button onclick="readAll()">3. Read All Local Ops</button>
+    <button onclick="buildCurrentState()">Build State (CRDT)</button>
+    <button onclick="testCRDT()">Test CRDT Conflict</button>
+    <button onclick="testEncryption()">Test Encryption</button>
+    <button onclick="queryBySource()">Query by Source</button>
+    <button onclick="countAll()">Count Ops</button>
+    <button onclick="resetIdentity()">Reset Identity</button>
+    <button onclick="clearLog()">Clear Log</button>
+
+    <pre id="log"></pre>
+
+    <script type="module">
+        import { openDB, getAllOps, mergeOps, queryOps, countOps, getOpById } from "../src/storage/indexedDB.js";
+        import { buildState, stateToObject } from "../src/crdt/lww.js";
+        import { createEncryptionIdentity, deriveSharedKey, encryptData, decryptData } from "../src/crypto/encryption.js";
+        import { sync, shareOperation }         from "../src/sync/sync.js";
+        import { createIdentity, clearIdentity } from "../src/identity/identity.js";
+
+        let db, ws, rtcPeer, identity;
+
+        function log(msg) {
+            const el = document.getElementById("log");
+            el.textContent += `[${new Date().toISOString().slice(11,19)}] ${msg}\n`;
+            el.scrollTop = el.scrollHeight;
+        }
+
+        async function init() {
+            const hadSaved = !!localStorage.getItem("ouroboros:identity");
+            try {
+                identity = await createIdentity();
+            } catch (err) {
+                log("ERROR: " + err.message);
+                return;
+            }
+            log((hadSaved ? "identity loaded from localStorage" : "new identity generated")
+                + " — pubkey: " + identity.publicKey.slice(0, 16) + "...");
+
+            db = await openDB();
+            log("indexedDB opened");
+
+            const result = sync(db, identity, "ws://localhost:9090", {
+                onConnect:    ()       => log("connected to relay"),
+                onSynced:     ()       => { log("initial sync complete"); rtcPeer = result.getRTC(); },
+                onOperation:  (op)     => log("live op received (relay): " + op.id.slice(0, 8)),
+                onDisconnect: ()       => log("disconnected from relay"),
+                onPeerJoined: (peerId) => log("WebRTC peer joined: " + peerId.slice(0, 8)),
+                onPeerLeft:   (peerId) => log("WebRTC peer left: " + peerId.slice(0, 8)),
+                verify:       true,
+                signalingUrl: "ws://localhost:8081",
+                roomId:       "ouroboros-room",
+            });
+            ws = result.ws;
+        };
+
+        async function writeOp() {
+            if (!ws || !db || !identity) { log("ERROR: call Connect first"); return; }
+            if (ws.readyState !== WebSocket.OPEN) { log("ERROR: WebSocket not open yet"); return; }
+
+            const keys = ["price", "volume", "signal", "status"];
+            const key  = keys[Math.floor(Math.random() * keys.length)];
+            const val  = Math.random().toFixed(4);
+
+            const op = await shareOperation(ws, db, identity, {
+                data:    { key, value: val, source: "browser-test" },
+                signals: { entry: "test-entry", exit: "test-exit" },
+            }, rtcPeer);
+            log(`op written: ${op.id.slice(0,8)}... | key="${op.data.key}" value=${op.data.value}`);
+        };
+
+        async function readAll() {
+            if (!db) { log("ERROR: call Connect first"); return; }
+            const ops = await getAllOps(db, 0);
+            log(`local ops (${ops.length} total):`);
+            for (const op of ops) {
+                log("  " + op.id.slice(0, 8) + "... ts=" + op.ts + " val=" + (op.data?.value ?? "—"));
+            }
+        };
+
+        async function buildCurrentState() {
+            if (!db) { log("ERROR: call Connect first"); return; }
+            const ops   = await getAllOps(db, 0);
+            const state = buildState(ops);
+            const obj   = stateToObject(state);
+            log(`── CRDT State (${state.size} keys) ──`);
+            if (state.size === 0) {
+                log("  (empty — ops need data.key to appear in state)");
+            }
+            for (const [key, entry] of state) {
+                log(`  "${key}" = ${JSON.stringify(entry.value)}  (ts=${entry.ts} winner=${entry.publicKey.slice(0,8)}...)`);
+            }
+        }
+
+        async function testCRDT() {
+            log("── CRDT Conflict Test ──");
+
+            // Simulate 3 ops writing to the same key with different ts
+            const ops = [
+                { id: "op-a", ts: 1000, publicKey: "aaa", data: { key: "price", value: "100" } },
+                { id: "op-b", ts: 2000, publicKey: "bbb", data: { key: "price", value: "200" } },
+                { id: "op-c", ts: 2000, publicKey: "ccc", data: { key: "price", value: "300" } },
+            ];
+
+            log("ops:");
+            log('  op-a: key="price" value="100" ts=1000 pubkey=aaa');
+            log('  op-b: key="price" value="200" ts=2000 pubkey=bbb');
+            log('  op-c: key="price" value="300" ts=2000 pubkey=ccc  ← same ts as op-b');
+
+            const state = buildState(ops);
+            const winner = state.get("price");
+
+            log(`winner → value="${winner.value}" (ts=${winner.ts} pubkey=${winner.publicKey})`);
+            log(winner.value === "300" ? " ccc wins — highest publicKey on tie" : " wrong winner");
+
+            // Test order independence — same result regardless of op order
+            const stateReversed = buildState([...ops].reverse());
+            const same = stateReversed.get("price").value === winner.value;
+            log(same ? "order-independent — same result regardless of arrival order" : " order matters — bug!");
+        }
+
+        async function testEncryption() {
+            log("── Encryption Test ──");
+
+            // 1. Simulate two peers — each has an ECDH keypair
+            const peerA = await createEncryptionIdentity();
+            const peerB = await createEncryptionIdentity();
+            log("peerA pubkey: " + peerA.publicKey.slice(0, 16) + "...");
+            log("peerB pubkey: " + peerB.publicKey.slice(0, 16) + "...");
+
+            // 2. Each derives the shared key independently (no exchange needed)
+            const keyA = await deriveSharedKey(peerA.keyPair.privateKey, peerB.publicKey);
+            const keyB = await deriveSharedKey(peerB.keyPair.privateKey, peerA.publicKey);
+            log("shared keys derived ✓");
+
+            // 3. PeerA encrypts
+            const original  = { source: "peerA", value: "secret-0.9999", msg: "private data" };
+            const ciphertext = await encryptData(keyA, original);
+            log("encrypted: " + ciphertext.slice(0, 32) + "...");
+
+            // 4. PeerB decrypts
+            const decrypted = await decryptData(keyB, ciphertext);
+            log("decrypted: " + JSON.stringify(decrypted));
+
+            const ok = JSON.stringify(original) === JSON.stringify(decrypted);
+            log(ok ? " Encryption works — relay saw only ciphertext" : "❌ Mismatch!");
+        }
+
+        async function queryBySource() {
+            if (!db) { log("ERROR: call Connect first"); return; }
+            const results = await queryOps(db, { "data.source": "browser-test" });
+            log(`queryOps({ "data.source": "browser-test" }) → ${results.length} op(s):`);
+            for (const op of results) {
+                log("  " + op.id.slice(0, 8) + "... val=" + op.data?.value + " ts=" + op.ts);
+            }
+        }
+
+        async function countAll() {
+            if (!db) { log("ERROR: call Connect first"); return; }
+            const n = await countOps(db);
+            log(`countOps() → ${n} op(s) in local DB`);
+        }
+
+        function resetIdentity() {
+            clearIdentity();
+            rtcPeer?.close();
+            db = ws = rtcPeer = identity = null;
+            log("identity erased — next Connect will generate a fresh keypair");
+        };
+
+        function clearLog() { document.getElementById("log").textContent = ""; }
+
+        // expose to onclick handlers
+        window.buildCurrentState = buildCurrentState;
+        window.testCRDT          = testCRDT;
+        window.init              = init;
+        window.writeOp         = writeOp;
+        window.readAll         = readAll;
+        window.testEncryption  = testEncryption;
+        window.queryBySource   = queryBySource;
+        window.countAll        = countAll;
+        window.resetIdentity   = resetIdentity;
+        window.clearLog        = clearLog;
+    </script>
+</body>
+</html>
